@@ -1,0 +1,117 @@
+---
+title: "Practical Machine Learning - Final Project"
+author: "Elizabeth Storm"
+date: "July 24, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(caret)
+library(pgmm)
+library(rpart)
+library(gbm)
+library(lubridate)
+library(forecast)
+library(e1071)
+library(lars)
+library(elasticnet)
+library(rattle)
+```
+
+## Exploratory Data Analysis
+
+For this project we are using data from accelerometers from 6 participants. I am trying to predict whether a participant did an excerise in manner A or manner B, which is the classe variable on the record.
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. 
+
+```{r data,message=FALSE}
+modeling <- read.csv('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv', 
+                     header=T, na.strings = c("NA","","#DIV/0!"))
+holdout <- read.csv('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv', 
+                    header=T, na.strings = c("NA","","#DIV/0!"))
+```
+
+Second, I will preform a quick review of the data to get a handle on what the data looks like. I will also do any necessary steps to clean up missing data fields that would later on cause errors. I will also handle any highly correlated values.
+```{r explore,eval=FALSE}
+head(modeling)
+names(modeling)
+
+```
+```{r clean,message=FALSE}
+# Remove unnecessary features
+modeling<-modeling[,-1:-7]
+# Remove features with no values
+modeling<-modeling[, colSums(is.na(modeling)) < 1900]
+# Check if there are other features that should be removed using nearZeroVar function
+nearZero<-nearZeroVar(modeling, saveMetrics = TRUE)
+
+#remove highly correlated variables
+corr_data<-cor(modeling[,-length(modeling)])
+correlated<-findCorrelation(corr_data, cutoff=0.8)
+modeling<-modeling[, -correlated]
+```
+
+When I used the nearZero function, a review of the results showed that there were not any additional fields I would want to remove.
+
+#Data Prep for Modeling
+I am going to partition my modeling data using a 60/40 split for training and testing. I am also going to do 5 fold cross validation when training my data.
+
+```{r prep,message=FALSE}
+set.seed(100)
+inTrain = createDataPartition(modeling$classe, p = 0.6)[[1]]
+train = modeling[ inTrain,]
+test = modeling[-inTrain,]
+
+
+
+fitControl <- trainControl(method = "cv",
+                           number = 5,
+                           allowParallel = FALSE)
+```
+
+#Modeling
+I am going to compare 4 types of models for classifying my data into the A/B types of exercise:
+- Random Forest (RF)
+- Gradiant Boosting (GBM)
+- Linear Discriminant Analysis (LDA)
+- A combination of the three above stacked as a Random Forest
+
+```{r model,message=FALSE}
+set.seed(1000)
+modelFitRF <- train(classe ~ ., method = 'rf', data=train, trControl=fitControl, 
+                    preprocess=c("center","scale"))
+modelFitGMB <- train(classe ~ ., method = 'gbm', data=train, trControl=fitControl)
+modelFitLDA <- train(classe ~ ., method = 'lda', data=train, trControl=fitControl, 
+                     preprocess=c("center","scale"))
+
+
+predRF <- predict(modelFitRF, newdata=test)
+predGMB <- predict(modelFitGMB, newdata=test)
+predLDA <- predict(modelFitLDA, newdata=test)
+
+
+all_pred <- data.frame(predRF,predGMB,predLDA, classe = test$classe)
+combinedMod <- train(classe ~ .,method="rf", data = all_pred, trControl=fitControl, 
+                     preprocess=c("center","scale"))
+combinedPred <- predict(combinedMod, all_pred)
+```
+
+#Evaluation of Results
+Using accuarcy as a measurement to compare between model results, I will review how each model performs on my test data.
+
+```{r result}
+confusionMatrix(test$classe, predRF)$overall[1]
+confusionMatrix(test$classe, predGMB)$overall[1]
+confusionMatrix(test$classe, predLDA)$overall[1]
+confusionMatrix(test$classe, combinedPred)$overall[1]
+```
+Based on the results, I see that Random Forest and the stacked model perform about the same. Since the Random Forest is simplier, I am going to rely on that model to assess my performance on the Holdout data as part of our Course Quiz.
+
+```{r test}
+holdoutRF <- predict(modelFitRF, newdata=holdout)
+
+holdoutRF
+```
+
+These are the values I submitted to the quiz which resulted in 19/20 accuracy which is good!
